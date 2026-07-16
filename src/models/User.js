@@ -116,9 +116,15 @@ class User {
           WHEN subscription_type IN ('monthly', 'annual') AND subscription_end IS NOT NULL AND subscription_end < CURRENT_TIMESTAMP AND auto_renew = false THEN 'expired'
           WHEN subscription_type IN ('monthly', 'annual') AND auto_renew = true THEN 'active'
           ELSE subscription_status
-        END,
-        updated_at = CURRENT_TIMESTAMP
+        END
       WHERE id = $1
+        AND (
+          (role = 'admin' AND subscription_status <> 'active')
+          OR (subscription_type = 'trial' AND trial_end IS NOT NULL AND trial_end < CURRENT_TIMESTAMP AND subscription_status <> 'expired')
+          OR (subscription_type IN ('monthly', 'annual') AND auto_renew = true AND subscription_end IS NOT NULL AND subscription_end < CURRENT_TIMESTAMP)
+          OR (subscription_type IN ('monthly', 'annual') AND auto_renew = false AND subscription_end IS NOT NULL AND subscription_end < CURRENT_TIMESTAMP AND subscription_status <> 'expired')
+          OR (subscription_type IN ('monthly', 'annual') AND auto_renew = true AND subscription_status <> 'active')
+        )
     `;
 
     await query(text, [userId]);
