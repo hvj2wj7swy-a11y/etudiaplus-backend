@@ -21,7 +21,6 @@ const pool = new Pool(
         database: process.env.DB_NAME,
       }
 );
-});
 
 // Tester la connexion
 pool.on('connect', () => {
