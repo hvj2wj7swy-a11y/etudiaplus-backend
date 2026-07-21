@@ -11,13 +11,19 @@ const DB_PASSWORD = process.env.DB_PASSWORD || undefined;
 const DB_NAME = process.env.DB_NAME || 'edudia_plus';
 const DB_DEFAULT = process.env.DB_DEFAULT || 'postgres';
 
+const schemaPath = path.resolve(
+  __dirname,
+  '../../../database/schema.sql'
+);
+
 const connectClient = (database) => {
   if (DB_URL) {
     return new Client({
       connectionString: DB_URL,
-      ssl: process.env.NODE_ENV === 'production'
-        ? { rejectUnauthorized: false }
-        : false,
+      ssl:
+        process.env.NODE_ENV === 'production'
+          ? { rejectUnauthorized: false }
+          : false,
     });
   }
 
