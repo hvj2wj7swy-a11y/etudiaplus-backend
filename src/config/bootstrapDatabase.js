@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
 
+const DB_URL = process.env.DATABASE_URL;
+
 const DB_HOST = process.env.DB_HOST || 'localhost';
 const DB_PORT = Number(process.env.DB_PORT || 5432);
 const DB_USER = process.env.DB_USER || 'postgres';
@@ -9,15 +11,24 @@ const DB_PASSWORD = process.env.DB_PASSWORD || undefined;
 const DB_NAME = process.env.DB_NAME || 'edudia_plus';
 const DB_DEFAULT = process.env.DB_DEFAULT || 'postgres';
 
-const schemaPath = path.resolve(__dirname, '../../../database/schema.sql');
+const connectClient = (database) => {
+  if (DB_URL) {
+    return new Client({
+      connectionString: DB_URL,
+      ssl: process.env.NODE_ENV === 'production'
+        ? { rejectUnauthorized: false }
+        : false,
+    });
+  }
 
-const connectClient = (database) => new Client({
-  host: DB_HOST,
-  port: DB_PORT,
-  user: DB_USER,
-  password: DB_PASSWORD,
-  database
-});
+  return new Client({
+    host: DB_HOST,
+    port: DB_PORT,
+    user: DB_USER,
+    password: DB_PASSWORD,
+    database,
+  });
+};
 
 const normalizeSchemaSql = (rawSql) => {
   let schemaSql = rawSql.replace(/\/\*[\s\S]*?\*\//g, '');
