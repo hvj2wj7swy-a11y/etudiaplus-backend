@@ -13,7 +13,7 @@ const DB_DEFAULT = process.env.DB_DEFAULT || 'postgres';
 
 const schemaPath = path.resolve(
   __dirname,
-  '../../../database/schema.sql'
+  '../../database/schema.sql'
 );
 
 const connectClient = (database) => {
