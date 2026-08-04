@@ -5,7 +5,10 @@
 const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/userController');
-const { authenticateToken } = require('../middleware/authMiddleware');
+const {
+  authenticateToken,
+  authorizeAdmin
+} = require('../middleware/authMiddleware');
 
 /**
  * GET /api/users/profile
@@ -30,5 +33,15 @@ router.get('/top-contributors', userController.getTopContributors);
  * Obtenir les informations publiques d'un utilisateur
  */
 router.get('/:id/public', userController.getPublicProfile);
+/**
+ * PATCH /api/users/:id/role
+ * Modifier le rôle d’un utilisateur — administrateur uniquement
+ */
+router.patch(
+  '/:id/role',
+  authenticateToken,
+  authorizeAdmin,
+  userController.updateUserRole
+);
 
 module.exports = router;

@@ -114,7 +114,59 @@ class UserController {
         message: 'Erreur lors de la récupération du profil'
       });
     }
-  }
-}
+    } 
+      /**
+   * Modifier le rôle d'un utilisateur
+   * Administrateur uniquement
+   */
+  static async updateUserRole(req, res) {
+    try {
+      const userId = Number(req.params.id);
+      const { role } = req.body;
 
+      if (!Number.isInteger(userId) || userId <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Identifiant utilisateur invalide'
+        });
+      }
+
+      if (!['student', 'admin'].includes(role)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Rôle invalide'
+        });
+      }
+
+      const existingUser = await User.findById(userId);
+
+      if (!existingUser) {
+        return res.status(404).json({
+          success: false,
+          message: 'Utilisateur non trouvé'
+        });
+      }
+
+      const updatedUser = await User.updateRole(userId, role);
+
+      return res.json({
+        success: true,
+        message:
+          role === 'admin'
+            ? 'Utilisateur promu administrateur'
+            : 'Rôle administrateur retiré',
+        data: {
+          user: updatedUser
+        }
+      });
+    } catch (error) {
+      console.error('Erreur modification rôle utilisateur:', error);
+
+      return res.status(500).json({
+        success: false,
+        message: 'Erreur lors de la modification du rôle'
+      });
+    }
+  }
+} 
 module.exports = UserController;
