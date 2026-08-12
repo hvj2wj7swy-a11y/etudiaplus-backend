@@ -7,7 +7,9 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const documentController = require('../controllers/documentController');
-const { authenticateToken } = require('../middleware/authMiddleware');
+const {
+  authenticateToken
+} = require('../middleware/authMiddleware')
 
 // Configuration de multer pour le téléversement
 const storage = multer.diskStorage({
@@ -72,5 +74,15 @@ router.post('/:id/report', authenticateToken, documentController.reportDocument)
  * Obtenir les documents d'un utilisateur
  */
 router.get('/user/:userId', documentController.getUserDocuments);
+
+/**
+ * DELETE /api/documents/:id
+ * Supprimer un document — auteur ou administrateur
+ */
+router.delete(
+  '/:id',
+  authenticateToken,
+  documentController.deleteDocument
+)
 
 module.exports = router;

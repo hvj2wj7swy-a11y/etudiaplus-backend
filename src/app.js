@@ -41,6 +41,14 @@ app.use(cors({
 }));
 
 // Parser JSON et URL-encoded
+const subscriptionController =
+  require('./controllers/subscriptionController');
+
+app.post(
+  '/api/subscriptions/webhook',
+  express.raw({ type: 'application/json' }),
+  subscriptionController.webhook
+);
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -58,8 +66,16 @@ app.use('/api/users', require('./routes/userRoutes'));
 // Routes des documents
 app.use('/api/documents', require('./routes/documentRoutes'));
 
+// Routes des signalements
+app.use('/api/reports', require('./routes/reportRoutes'));
+
 // Routes du forum
 app.use('/api/forum', require('./routes/forumRoutes'));
+
+app.use(
+  '/api/notifications',
+  require('./routes/notificationRoutes')
+)
 
 // Routes du tableau de bord
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
@@ -69,6 +85,11 @@ app.use('/api/notes', require('./routes/noteRoutes'));
 
 // Routes des abonnements
 app.use('/api/subscriptions', require('./routes/subscriptionRoutes'));
+
+app.use(
+  '/api/agenda',
+  require('./routes/agendaRoutes')
+);
 
 // ==================== GESTION DES ERREURS ====================
 

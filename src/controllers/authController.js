@@ -4,6 +4,8 @@
 
 const User = require('../models/User');
 const { generateToken } = require('../utils/tokenUtils');
+const crypto = require('crypto');
+const { sendPasswordResetEmail } = require('../services/emailService');
 
 const DEV_ADMIN_EMAIL = String(process.env.DEV_ADMIN_EMAIL || '').trim().toLowerCase();
 const DEV_ADMIN_PASSWORD = process.env.DEV_ADMIN_PASSWORD || '';
@@ -204,7 +206,168 @@ class AuthController {
         message: 'Erreur lors de la vérification du token'
       });
     }
+  }/**
+ * Demander une réinitialisation du mot de passe
+ */
+static async forgotPassword(req, res) {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Adresse courriel requise'
+      });
+    }
+
+    const normalizedEmail = String(email)
+      .toLowerCase()
+      .trim();
+
+    const user = await User.findByEmail(
+      normalizedEmail
+    );
+
+    /*
+     * On retourne volontairement le même message
+     * même si le compte n'existe pas.
+     *
+     * Cela empêche quelqu'un de vérifier
+     * quelles adresses sont inscrites.
+     */
+    if (!user) {
+      return res.json({
+        success: true,
+        message:
+          'Si un compte existe avec cette adresse, un lien de réinitialisation sera envoyé.'
+      });
+    }
+
+    // Jeton envoyé à l'utilisateur
+    const resetToken = crypto
+      .randomBytes(32)
+      .toString('hex');
+
+    // Version hachée enregistrée dans PostgreSQL
+    const tokenHash = crypto
+      .createHash('sha256')
+      .update(resetToken)
+      .digest('hex');
+
+    // Expiration dans 1 heure
+    const expiresAt = new Date(
+      Date.now() + 60 * 60 * 1000
+    );
+
+    await User.savePasswordResetToken(
+      user.id,
+      tokenHash,
+      expiresAt
+    );
+
+    const frontendUrl =
+      process.env.FRONTEND_URL ||
+      'http://localhost:5173';
+
+    const resetUrl =
+      `${frontendUrl}/reset-password?token=${resetToken}`;
+
+    /*
+     * TEMPORAIRE :
+     * pendant le développement seulement.
+     *
+     * À l'étape suivante, ce lien sera envoyé
+     * par courriel.
+     */
+    await sendPasswordResetEmail(
+  user.email,
+  resetUrl
+);
+
+    return res.json({
+      success: true,
+      message:
+        'Si un compte existe avec cette adresse, un lien de réinitialisation sera envoyé.'
+    });
+
+  } catch (error) {
+    console.error(
+      'Erreur mot de passe oublié:',
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        'Erreur lors de la demande de réinitialisation'
+    });
   }
+}
+/**
+ * Réinitialiser le mot de passe
+ */
+static async resetPassword(req, res) {
+  try {
+    const { token, password } = req.body;
+
+    if (!token || !password) {
+      return res.status(400).json({
+        success: false,
+        message:
+          'Jeton et nouveau mot de passe requis'
+      });
+    }
+
+    if (String(password).length < 8) {
+      return res.status(400).json({
+        success: false,
+        message:
+          'Le mot de passe doit contenir au moins 8 caractères'
+      });
+    }
+
+    const tokenHash = crypto
+      .createHash('sha256')
+      .update(String(token))
+      .digest('hex');
+
+    const user =
+      await User.findByPasswordResetToken(
+        tokenHash
+      );
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message:
+          'Le lien de réinitialisation est invalide ou expiré'
+      });
+    }
+
+    await User.resetPassword(
+      user.id,
+      password
+    );
+
+    return res.json({
+      success: true,
+      message:
+        'Mot de passe modifié avec succès'
+    });
+
+  } catch (error) {
+    console.error(
+      'Erreur réinitialisation mot de passe:',
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        'Erreur lors de la réinitialisation du mot de passe'
+    });
+  }
+}
 }
 
 module.exports = AuthController;

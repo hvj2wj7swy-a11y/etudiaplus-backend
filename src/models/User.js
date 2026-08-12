@@ -22,6 +22,8 @@ const USER_SELECT_FIELDS = `
   subscription_start,
   subscription_end,
   auto_renew,
+  stripe_customer_id,
+stripe_subscription_id,
   points,
   created_at,
   is_active
@@ -38,7 +40,9 @@ const mapSubscriptionMetadata = (user) => {
     trialEnd: user.trial_end,
     subscriptionStartDate: user.subscription_start,
     subscriptionEndDate: user.subscription_end,
-    autoRenew: user.auto_renew
+    autoRenew: user.auto_renew,
+    stripeCustomerId: user.stripe_customer_id,
+stripeSubscriptionId: user.stripe_subscription_id
   };
 };
 
@@ -153,6 +157,77 @@ class User {
     const res = await query(text, [userId, normalizedPlan, durationInterval]);
     return mapSubscriptionMetadata(res.rows[0]);
   }
+static async saveStripeSubscription(
+  userId,
+  stripeCustomerId,
+  stripeSubscriptionId
+) {
+  const text = `
+    UPDATE users
+    SET
+      stripe_customer_id = $2,
+      stripe_subscription_id = $3,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = $1
+    RETURNING ${USER_SELECT_FIELDS}
+  `;
+
+  const res = await query(text, [
+    userId,
+    stripeCustomerId || null,
+    stripeSubscriptionId || null
+  ]);
+
+  return mapSubscriptionMetadata(
+    res.rows[0] || null
+  );
+}
+
+static async renewStripeSubscription(
+  stripeSubscriptionId,
+  subscriptionEndDate
+) {
+  const text = `
+    UPDATE users
+    SET
+      subscription_status = 'active',
+      subscription_end = $2,
+      auto_renew = true,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE stripe_subscription_id = $1
+    RETURNING ${USER_SELECT_FIELDS}
+  `;
+
+  const res = await query(text, [
+    stripeSubscriptionId,
+    subscriptionEndDate
+  ]);
+
+  return mapSubscriptionMetadata(
+    res.rows[0] || null
+  );
+}
+
+static async markStripePaymentFailed(
+  stripeSubscriptionId
+) {
+  const text = `
+    UPDATE users
+    SET
+      subscription_status = 'inactive',
+      updated_at = CURRENT_TIMESTAMP
+    WHERE stripe_subscription_id = $1
+    RETURNING ${USER_SELECT_FIELDS}
+  `;
+
+  const res = await query(text, [
+    stripeSubscriptionId
+  ]);
+
+  return mapSubscriptionMetadata(
+    res.rows[0] || null
+  );
+}
 
   /**
    * Résilier le renouvellement automatique
@@ -185,6 +260,32 @@ class User {
   }
 
   /**
+ * Marquer un abonnement Stripe comme terminé
+ */
+  static async expireStripeSubscription(
+  stripeSubscriptionId
+) {
+  const text = `
+    UPDATE users
+    SET
+      subscription_status = 'expired',
+      auto_renew = false,
+      stripe_subscription_id = NULL,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE stripe_subscription_id = $1
+    RETURNING ${USER_SELECT_FIELDS}
+  `;
+
+  const res = await query(text, [
+    stripeSubscriptionId
+  ]);
+
+  return mapSubscriptionMetadata(
+    res.rows[0] || null
+  );
+}
+
+  /**
    * Mettre à jour le profil utilisateur
    */
   static async updateProfile(userId, updateData) {
@@ -204,8 +305,95 @@ class User {
     `;
     
     const res = await query(text, [userId, firstName, lastName, school, program, session, profilePhotoUrl]);
-    return mapSubscriptionMetadata(res.rows[0]);
-  }
+return mapSubscriptionMetadata(res.rows[0]);
+}
+
+/**
+ * Modifier un utilisateur depuis l'administration
+ */
+static async updateByAdmin(userId, updateData) {
+  const {
+    firstName,
+    lastName,
+    program,
+    points
+  } = updateData;
+
+  const text = `
+    UPDATE users
+    SET
+      first_name = COALESCE($2, first_name),
+      last_name = COALESCE($3, last_name),
+      program = COALESCE($4, program),
+      points = COALESCE($5, points),
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = $1
+    RETURNING ${USER_SELECT_FIELDS}
+  `;
+
+  const res = await query(text, [
+    userId,
+    firstName,
+    lastName,
+    program,
+    points
+  ]);
+
+  return mapSubscriptionMetadata(res.rows[0]);
+}
+
+/**
+ * Modifier le rôle d'un utilisateur
+ */
+static async updateRole(userId, role) {
+  const text = `
+    UPDATE users
+    SET
+      role = $2,
+      subscription_status = CASE
+        WHEN $2 = 'admin' THEN 'active'
+        ELSE subscription_status
+      END,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = $1
+    RETURNING ${USER_SELECT_FIELDS}
+  `;
+
+  const res = await query(text, [userId, role]);
+  return mapSubscriptionMetadata(res.rows[0]);
+}
+
+/**
+ * Activer ou désactiver un utilisateur
+ */
+static async updateStatus(userId, isActive) {
+  const text = `
+    UPDATE users
+    SET
+      is_active = $2,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = $1
+    RETURNING ${USER_SELECT_FIELDS}
+  `;
+
+  const res = await query(text, [userId, isActive]);
+  return mapSubscriptionMetadata(res.rows[0]);
+}
+
+/**
+ * Supprimer un utilisateur
+ */
+static async deleteById(userId) {
+  const text = `
+    DELETE FROM users
+    WHERE id = $1
+    RETURNING id
+  `;
+
+  const res = await query(text, [userId]);
+
+  return res.rows[0] || null;
+}
 
   /**
    * Vérifier le mot de passe
@@ -213,6 +401,21 @@ class User {
   static async verifyPassword(plainPassword, passwordHash) {
     return await bcrypt.compare(plainPassword, passwordHash);
   }
+
+/**
+ * Obtenir tous les utilisateurs
+ */
+static async getAllUsers() {
+  const text = `
+    SELECT ${USER_SELECT_FIELDS}
+    FROM users
+    ORDER BY created_at DESC
+  `;
+
+  const res = await query(text);
+  return res.rows.map(mapSubscriptionMetadata);
+}
+
 
   /**
    * Obtenir les meilleurs contributeurs
@@ -247,6 +450,100 @@ class User {
     const res = await query(text, [userId, points]);
     return res.rows[0];
   }
+  /**
+ * Enregistrer un jeton de réinitialisation de mot de passe
+ */
+static async savePasswordResetToken(
+  userId,
+  tokenHash,
+  expiresAt
+) {
+  const text = `
+    UPDATE users
+    SET
+      password_reset_token = $2,
+      password_reset_expires = $3,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = $1
+    RETURNING id
+  `;
+
+  const res = await query(text, [
+    userId,
+    tokenHash,
+    expiresAt
+  ]);
+
+  return res.rows[0] || null;
 }
+
+/**
+ * Trouver l'utilisateur associé à un jeton
+ * de réinitialisation encore valide
+ */
+static async findByPasswordResetToken(tokenHash) {
+  const text = `
+    SELECT *
+    FROM users
+    WHERE password_reset_token = $1
+      AND password_reset_expires > CURRENT_TIMESTAMP
+    LIMIT 1
+  `;
+
+  const res = await query(text, [tokenHash]);
+
+  return res.rows[0] || null;
+}
+
+/**
+ * Réinitialiser le mot de passe
+ */
+static async resetPassword(userId, newPassword) {
+  const passwordHash = await bcrypt.hash(
+    newPassword,
+    10
+  );
+
+  const text = `
+    UPDATE users
+    SET
+      password_hash = $2,
+      password_reset_token = NULL,
+      password_reset_expires = NULL,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = $1
+    RETURNING ${USER_SELECT_FIELDS}
+  `;
+
+  const res = await query(text, [
+    userId,
+    passwordHash
+  ]);
+
+  return mapSubscriptionMetadata(
+    res.rows[0] || null
+  );
+}
+
+/**
+ * Effacer un jeton de réinitialisation
+ */
+static async clearPasswordResetToken(userId) {
+  const text = `
+    UPDATE users
+    SET
+      password_reset_token = NULL,
+      password_reset_expires = NULL,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = $1
+    RETURNING id
+  `;
+
+  const res = await query(text, [userId]);
+
+  return res.rows[0] || null;
+}
+}
+
 
 module.exports = User;

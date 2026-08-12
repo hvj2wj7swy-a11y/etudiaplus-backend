@@ -4,6 +4,8 @@
 
 const ForumQuestion = require('../models/ForumQuestion');
 const ForumAnswer = require('../models/ForumAnswer');
+const User = require('../models/User');
+const Notification = require('../models/Notification');
 
 class ForumController {
   /**
@@ -47,13 +49,35 @@ class ForumController {
   static async getQuestions(req, res) {
     try {
       const limit = Math.min(parseInt(req.query.limit) || 20, 100);
-      const offset = parseInt(req.query.offset) || 0;
+const offset = parseInt(req.query.offset) || 0;
 
-      const filters = {
-        category: req.query.category,
-        search: req.query.search,
-        isResolved: req.query.isResolved !== undefined ? req.query.isResolved === 'true' : undefined
-      };
+const userId =
+  req.user.id ??
+  req.user.userId ??
+  req.user.sub;
+
+const currentUser = await User.findById(userId);
+
+if (!currentUser) {
+  return res.status(404).json({
+    success: false,
+    message: 'Utilisateur non trouvé'
+  });
+}
+
+const filters = {
+  category: req.query.category,
+  search: req.query.search,
+  isResolved:
+    req.query.isResolved !== undefined
+      ? req.query.isResolved === 'true'
+      : undefined,
+
+  program:
+    currentUser.role === 'admin'
+      ? req.query.program || currentUser.program
+      : currentUser.program
+};
 
       const questions = await ForumQuestion.getAll(filters, limit, offset);
 
@@ -103,6 +127,121 @@ class ForumController {
   }
 
   /**
+ * Modifier une question
+ */
+static async updateQuestion(req, res) {
+  try {
+    const questionId = parseInt(req.params.id)
+
+    const { title, content, category } = req.body
+
+    if (!title || !content || !category) {
+      return res.status(400).json({
+        success: false,
+        message: 'Titre, contenu et catégorie requis'
+      })
+    }
+
+    const question = await ForumQuestion.update(questionId, {
+      title,
+      content,
+      category,
+      userId: req.user.id
+    })
+
+    if (!question) {
+      return res.status(404).json({
+        success: false,
+        message: 'Question introuvable.'
+      })
+    }
+
+    res.json({
+      success: true,
+      message: 'Question modifiée.',
+      data: { question }
+    })
+  } catch (error) {
+    console.error('Erreur modification question :', error)
+
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la modification.'
+    })
+  }
+}
+
+/**
+ * Supprimer une question
+ */
+static async deleteQuestion(req, res) {
+  try {
+    const questionId = Number(req.params.id)
+
+    const deleted = await ForumQuestion.delete(
+      questionId,
+      req.user.id,
+      req.user.role
+    )
+
+    if (!deleted) {
+      return res.status(403).json({
+        success: false,
+        message:
+          'Question introuvable ou vous n’êtes pas autorisé à la supprimer.'
+      })
+    }
+
+    return res.json({
+      success: true,
+      message: 'Question supprimée.'
+    })
+  } catch (error) {
+    console.error('Erreur suppression question :', error)
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la suppression.'
+    })
+  }
+}
+
+/**
+ * Supprimer une réponse
+ */
+static async deleteAnswer(req, res) {
+  try {
+    const answerId = Number(req.params.answerId)
+
+    const deleted = await ForumAnswer.delete(
+      answerId,
+      req.user.id,
+      req.user.role
+    )
+
+    if (!deleted) {
+      return res.status(403).json({
+        success: false,
+        message:
+          'Réponse introuvable ou vous n’êtes pas autorisé à la supprimer.'
+      })
+    }
+
+    return res.json({
+      success: true,
+      message: 'Réponse supprimée.'
+    })
+  } catch (error) {
+    console.error('Erreur suppression réponse :', error)
+
+    return res.status(500).json({
+      success: false,
+      message: 'Impossible de supprimer la réponse.'
+    })
+  }
+}
+
+  /**
    * Créer une réponse
    */
   static async createAnswer(req, res) {
@@ -131,6 +270,24 @@ class ForumController {
         content,
         answeredBy: req.user.id
       });
+
+      if (
+  Number(question.asked_by) !==
+  Number(req.user.id)
+) {
+  await Notification.create({
+    userId: question.asked_by,
+    type: 'forum',
+    title: 'Nouvelle réponse',
+    message:
+      'Quelqu’un a répondu à votre question sur le forum.',
+    link: '/forum',
+    metadata: {
+      questionId,
+      answerId: answer.id
+    }
+  });
+}
 
       res.status(201).json({
         success: true,

@@ -22,7 +22,7 @@ const pool = new Pool(
       }
 );
 
-// Tester la connexion
+// Tester la connexion 
 pool.on('connect', () => {
   console.log('✅ Connecté à PostgreSQL');
 });

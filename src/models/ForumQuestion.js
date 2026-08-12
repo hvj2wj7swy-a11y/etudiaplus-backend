@@ -38,7 +38,13 @@ class ForumQuestion {
     
     const values = [];
     let paramCount = 0;
-    
+
+    if (filters.program) {
+  paramCount++;
+  text += ` AND u.program = $${paramCount}`;
+  values.push(filters.program);
+}
+
     if (filters.category) {
       paramCount++;
       text += ` AND q.category = $${paramCount}`;
@@ -81,6 +87,61 @@ class ForumQuestion {
     const res = await query(text, [id]);
     return res.rows[0];
   }
+
+  /**
+ * Modifier une question
+ */
+static async update(id, questionData) {
+  const { title, content, category, userId } = questionData
+
+  const text = `
+    UPDATE forum_questions
+    SET
+      title = $2,
+      content = $3,
+      category = $4
+    WHERE id = $1
+      AND asked_by = $5
+    RETURNING
+      id,
+      title,
+      content,
+      category,
+      asked_by,
+      view_count,
+      created_at,
+      is_resolved
+  `
+
+  const res = await query(text, [
+    id,
+    title,
+    content,
+    category,
+    userId
+  ])
+
+  return res.rows[0] || null
+}
+
+/**
+ * Supprimer une question
+ */
+static async delete(id, userId) {
+  const text = `
+    DELETE FROM forum_questions
+    WHERE id = $1
+      AND asked_by = $2
+    RETURNING id
+  `
+
+  const res = await query(text, [
+    id,
+    userId
+  ])
+
+  return res.rows[0] || null
+}
 
   /**
    * Incrémenter le compteur de vues

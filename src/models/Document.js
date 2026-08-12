@@ -21,7 +21,7 @@ class Document {
     `;
     
     const res = await query(text, [title, description, fileUrl, fileSize, fileType, 
-                                   school, program, courseCode, courseName, uploadedBy, 'pending']);
+                                   school, program, courseCode, courseName, uploadedBy, 'approved']);
     return res.rows[0];
   }
 
@@ -199,6 +199,19 @@ class Document {
     const res = await query(text, [userId, limit, offset]);
     return res.rows;
   }
+  /**
+ * Supprimer un document
+ */
+static async deleteById(documentId) {
+  const text = `
+    DELETE FROM documents
+    WHERE id = $1
+    RETURNING id, file_url
+  `;
+
+  const res = await query(text, [documentId]);
+  return res.rows[0] || null;
+}
 }
 
 module.exports = Document;

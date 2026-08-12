@@ -1,14 +1,28 @@
 const { pool, query } = require('../config/database');
 
 class Note {
+  /**
+   * Obtenir les cahiers d'un utilisateur
+   */
   static async listByUser(userId, filters = {}) {
     let text = `
-      SELECT n.id, n.title, n.course_name, n.color, n.is_favorite, n.is_trashed,
-             n.created_at, n.updated_at, n.last_opened_at,
-             COUNT(p.id)::INT AS page_count,
-             COALESCE(MAX(p.preview_text), '') AS preview_text
+      SELECT
+        n.id,
+        n.title,
+        n.course_name,
+        n.folder_name,
+        n.color,
+        n.is_favorite,
+        n.is_trashed,
+        n.source_pdf,
+        n.created_at,
+        n.updated_at,
+        n.last_opened_at,
+        COUNT(p.id)::INT AS page_count,
+        COALESCE(MAX(p.preview_text), '') AS preview_text
       FROM notebooks n
-      LEFT JOIN note_pages p ON p.notebook_id = n.id
+      LEFT JOIN note_pages p
+        ON p.notebook_id = n.id
       WHERE n.user_id = $1
     `;
 
@@ -29,7 +43,16 @@ class Note {
 
     if (filters.search) {
       paramIndex += 1;
-      text += ` AND (n.title ILIKE $${paramIndex} OR n.course_name ILIKE $${paramIndex} OR COALESCE(p.preview_text, '') ILIKE $${paramIndex})`;
+
+      text += `
+        AND (
+          n.title ILIKE $${paramIndex}
+          OR n.course_name ILIKE $${paramIndex}
+          OR n.folder_name ILIKE $${paramIndex}
+          OR COALESCE(p.preview_text, '') ILIKE $${paramIndex}
+        )
+      `;
+
       values.push(`%${filters.search}%`);
     }
 
@@ -42,33 +65,103 @@ class Note {
     return result.rows;
   }
 
-  static async createNotebook({ userId, title, courseName, color, sheetType = 'lined' }) {
+  /**
+   * Créer un cahier
+   */
+  static async createNotebook({
+    userId,
+    title,
+    courseName,
+    folderName = 'Sans dossier',
+    color,
+    sheetType = 'lined',
+    sourcePdf = null
+  }) {
     const client = await pool.connect();
+
     try {
       await client.query('BEGIN');
 
       const notebookResult = await client.query(
         `
-          INSERT INTO notebooks (user_id, title, course_name, color)
-          VALUES ($1, $2, $3, $4)
-          RETURNING id, user_id, title, course_name, color, is_favorite, is_trashed, created_at, updated_at, last_opened_at
+          INSERT INTO notebooks (
+            user_id,
+            title,
+            course_name,
+            folder_name,
+            color,
+            source_pdf
+          )
+          VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+          RETURNING
+            id,
+            user_id,
+            title,
+            course_name,
+            folder_name,
+            color,
+            is_favorite,
+            is_trashed,
+            source_pdf,
+            created_at,
+            updated_at,
+            last_opened_at
         `,
-        [userId, title, courseName, color]
+        [
+          userId,
+          title,
+          courseName,
+          folderName || 'Sans dossier',
+          color || '#0d6efd',
+          sourcePdf ? JSON.stringify(sourcePdf) : null
+        ]
       );
 
       const notebook = notebookResult.rows[0];
 
       const pageResult = await client.query(
         `
-          INSERT INTO note_pages (notebook_id, title, page_order, sheet_type, preview_text)
-          VALUES ($1, $2, $3, $4, $5)
-          RETURNING id, notebook_id, title, page_order, sheet_type, preview_text, created_at, updated_at
+          INSERT INTO note_pages (
+            notebook_id,
+            title,
+            page_order,
+            sheet_type,
+            preview_text,
+            background
+          )
+          VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+          RETURNING
+            id,
+            notebook_id,
+            title,
+            page_order,
+            sheet_type,
+            preview_text,
+            background,
+            created_at,
+            updated_at
         `,
-        [notebook.id, 'Page 1', 1, sheetType, '']
+        [
+          notebook.id,
+          'Page 1',
+          1,
+          sheetType,
+          '',
+          null
+        ]
       );
 
       await client.query('COMMIT');
-      return { ...notebook, pages: [pageResult.rows[0]] };
+
+      return {
+        ...notebook,
+        pages: [
+          {
+            ...pageResult.rows[0],
+            elements: []
+          }
+        ]
+      };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -77,49 +170,97 @@ class Note {
     }
   }
 
+  /**
+   * Obtenir un cahier complet
+   */
   static async findNotebookById(userId, notebookId) {
     const notebookResult = await query(
       `
-        SELECT id, user_id, title, course_name, color, is_favorite, is_trashed, created_at, updated_at, last_opened_at
+        SELECT
+          id,
+          user_id,
+          title,
+          course_name,
+          folder_name,
+          color,
+          is_favorite,
+          is_trashed,
+          source_pdf,
+          created_at,
+          updated_at,
+          last_opened_at
         FROM notebooks
-        WHERE id = $1 AND user_id = $2
+        WHERE id = $1
+          AND user_id = $2
       `,
       [notebookId, userId]
     );
 
     const notebook = notebookResult.rows[0];
-    if (!notebook) return null;
+
+    if (!notebook) {
+      return null;
+    }
 
     const pagesResult = await query(
       `
-        SELECT p.id, p.notebook_id, p.title, p.page_order, p.sheet_type, p.preview_text, p.created_at, p.updated_at,
-               COALESCE(
-                 json_agg(
-                   json_build_object(
-                     'id', e.id,
-                     'type', e.element_type,
-                     'zIndex', e.z_index,
-                     'data', e.element_data,
-                     'createdAt', e.created_at,
-                     'updatedAt', e.updated_at
-                   )
-                   ORDER BY e.z_index, e.id
-                 ) FILTER (WHERE e.id IS NOT NULL),
-                 '[]'::json
-               ) AS elements
+        SELECT
+          p.id,
+          p.notebook_id,
+          p.title,
+          p.page_order,
+          p.sheet_type,
+          p.preview_text,
+          p.background,
+          p.created_at,
+          p.updated_at,
+
+          COALESCE(
+            json_agg(
+              json_build_object(
+                'id', e.id,
+                'type', e.element_type,
+                'zIndex', e.z_index,
+                'data', e.element_data,
+                'createdAt', e.created_at,
+                'updatedAt', e.updated_at
+              )
+              ORDER BY e.z_index, e.id
+            )
+            FILTER (WHERE e.id IS NOT NULL),
+            '[]'::json
+          ) AS elements
+
         FROM note_pages p
-        LEFT JOIN note_elements e ON e.page_id = p.id
+
+        LEFT JOIN note_elements e
+          ON e.page_id = p.id
+
         WHERE p.notebook_id = $1
+
         GROUP BY p.id
-        ORDER BY p.page_order ASC, p.id ASC
+
+        ORDER BY
+          p.page_order ASC,
+          p.id ASC
       `,
       [notebookId]
     );
 
-    return { ...notebook, pages: pagesResult.rows };
+    return {
+      ...notebook,
+      pages: pagesResult.rows
+    };
   }
 
-  static async updateNotebook(userId, notebookId, updates) {
+  /**
+   * Modifier les informations d'un cahier
+   */
+  static async updateNotebook(
+    userId,
+    notebookId,
+    updates
+  ) {
     const fields = [];
     const values = [];
     let paramIndex = 0;
@@ -134,6 +275,14 @@ class Note {
       paramIndex += 1;
       fields.push(`course_name = $${paramIndex}`);
       values.push(updates.courseName);
+    }
+
+    if (typeof updates.folderName === 'string') {
+      paramIndex += 1;
+      fields.push(`folder_name = $${paramIndex}`);
+      values.push(
+        updates.folderName.trim() || 'Sans dossier'
+      );
     }
 
     if (typeof updates.color === 'string') {
@@ -160,13 +309,28 @@ class Note {
       values.push(updates.lastOpenedAt);
     }
 
+    if (updates.sourcePdf !== undefined) {
+      paramIndex += 1;
+      fields.push(`source_pdf = $${paramIndex}::jsonb`);
+
+      values.push(
+        updates.sourcePdf
+          ? JSON.stringify(updates.sourcePdf)
+          : null
+      );
+    }
+
     if (fields.length === 0) {
-      return this.findNotebookById(userId, notebookId);
+      return this.findNotebookById(
+        userId,
+        notebookId
+      );
     }
 
     paramIndex += 1;
     const notebookParam = paramIndex;
     values.push(notebookId);
+
     paramIndex += 1;
     const userParam = paramIndex;
     values.push(userId);
@@ -174,47 +338,125 @@ class Note {
     const result = await query(
       `
         UPDATE notebooks
-        SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP
-        WHERE id = $${notebookParam} AND user_id = $${userParam}
+        SET
+          ${fields.join(', ')},
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $${notebookParam}
+          AND user_id = $${userParam}
         RETURNING id
       `,
       values
     );
 
-    if (result.rowCount === 0) return null;
-    return this.findNotebookById(userId, notebookId);
+    if (result.rowCount === 0) {
+      return null;
+    }
+
+    return this.findNotebookById(
+      userId,
+      notebookId
+    );
   }
 
-  static async createPage(userId, notebookId, { title, sheetType }) {
+  /**
+   * Créer une nouvelle page
+   */
+  static async createPage(
+    userId,
+    notebookId,
+    {
+      title,
+      sheetType,
+      background = null
+    }
+  ) {
     const ownershipResult = await query(
-      'SELECT id FROM notebooks WHERE id = $1 AND user_id = $2',
+      `
+        SELECT id
+        FROM notebooks
+        WHERE id = $1
+          AND user_id = $2
+      `,
       [notebookId, userId]
     );
 
-    if (ownershipResult.rowCount === 0) return null;
+    if (ownershipResult.rowCount === 0) {
+      return null;
+    }
 
     const orderResult = await query(
-      'SELECT COALESCE(MAX(page_order), 0)::INT AS max_order FROM note_pages WHERE notebook_id = $1',
+      `
+        SELECT
+          COALESCE(MAX(page_order), 0)::INT AS max_order
+        FROM note_pages
+        WHERE notebook_id = $1
+      `,
       [notebookId]
     );
 
-    const nextOrder = (orderResult.rows[0]?.max_order || 0) + 1;
+    const nextOrder =
+      (orderResult.rows[0]?.max_order || 0) + 1;
 
     const pageResult = await query(
       `
-        INSERT INTO note_pages (notebook_id, title, page_order, sheet_type, preview_text)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, notebook_id, title, page_order, sheet_type, preview_text, created_at, updated_at
+        INSERT INTO note_pages (
+          notebook_id,
+          title,
+          page_order,
+          sheet_type,
+          preview_text,
+          background
+        )
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+        RETURNING
+          id,
+          notebook_id,
+          title,
+          page_order,
+          sheet_type,
+          preview_text,
+          background,
+          created_at,
+          updated_at
       `,
-      [notebookId, title || `Page ${nextOrder}`, nextOrder, sheetType || 'lined', '']
+      [
+        notebookId,
+        title || `Page ${nextOrder}`,
+        nextOrder,
+        sheetType || 'lined',
+        '',
+        background
+          ? JSON.stringify(background)
+          : null
+      ]
     );
 
-    await query('UPDATE notebooks SET updated_at = CURRENT_TIMESTAMP WHERE id = $1', [notebookId]);
-    return pageResult.rows[0];
+    await query(
+      `
+        UPDATE notebooks
+        SET updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+      `,
+      [notebookId]
+    );
+
+    return {
+      ...pageResult.rows[0],
+      elements: []
+    };
   }
 
-  static async updatePage(userId, notebookId, pageId, payload) {
+  /**
+   * Modifier et sauvegarder une page
+   */
+  static async updatePage(
+    userId,
+    notebookId,
+    pageId,
+    payload
+  ) {
     const client = await pool.connect();
+
     try {
       await client.query('BEGIN');
 
@@ -222,10 +464,17 @@ class Note {
         `
           SELECT p.id
           FROM note_pages p
-          JOIN notebooks n ON n.id = p.notebook_id
-          WHERE p.id = $1 AND p.notebook_id = $2 AND n.user_id = $3
+          JOIN notebooks n
+            ON n.id = p.notebook_id
+          WHERE p.id = $1
+            AND p.notebook_id = $2
+            AND n.user_id = $3
         `,
-        [pageId, notebookId, userId]
+        [
+          pageId,
+          notebookId,
+          userId
+        ]
       );
 
       if (pageOwner.rowCount === 0) {
@@ -255,38 +504,99 @@ class Note {
         values.push(payload.previewText);
       }
 
-      if (Array.isArray(payload.elements)) {
-        await client.query('DELETE FROM note_elements WHERE page_id = $1', [pageId]);
+      if (payload.background !== undefined) {
+        paramIndex += 1;
+        fields.push(
+          `background = $${paramIndex}::jsonb`
+        );
 
-        for (let index = 0; index < payload.elements.length; index += 1) {
-          const element = payload.elements[index];
+        values.push(
+          payload.background
+            ? JSON.stringify(payload.background)
+            : null
+        );
+      }
+
+      /*
+       * Les éléments du cahier :
+       * texte, stylet, formes, images, etc.
+       */
+      if (Array.isArray(payload.elements)) {
+        await client.query(
+          `
+            DELETE FROM note_elements
+            WHERE page_id = $1
+          `,
+          [pageId]
+        );
+
+        for (
+          let index = 0;
+          index < payload.elements.length;
+          index += 1
+        ) {
+          const element =
+            payload.elements[index];
+
           await client.query(
             `
-              INSERT INTO note_elements (page_id, element_type, element_data, z_index)
+              INSERT INTO note_elements (
+                page_id,
+                element_type,
+                element_data,
+                z_index
+              )
               VALUES ($1, $2, $3::jsonb, $4)
             `,
-            [pageId, element.type || 'unknown', JSON.stringify(element), index]
+            [
+              pageId,
+              element.type || 'unknown',
+              JSON.stringify(element),
+              index
+            ]
           );
         }
       }
 
       if (fields.length > 0) {
         values.push(pageId);
+
         await client.query(
           `
             UPDATE note_pages
-            SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP
+            SET
+              ${fields.join(', ')},
+              updated_at = CURRENT_TIMESTAMP
             WHERE id = $${values.length}
           `,
           values
         );
       } else {
-        await client.query('UPDATE note_pages SET updated_at = CURRENT_TIMESTAMP WHERE id = $1', [pageId]);
+        await client.query(
+          `
+            UPDATE note_pages
+            SET updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+          `,
+          [pageId]
+        );
       }
 
-      await client.query('UPDATE notebooks SET updated_at = CURRENT_TIMESTAMP WHERE id = $1', [notebookId]);
+      await client.query(
+        `
+          UPDATE notebooks
+          SET updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1
+        `,
+        [notebookId]
+      );
+
       await client.query('COMMIT');
-      return this.findNotebookById(userId, notebookId);
+
+      return this.findNotebookById(
+        userId,
+        notebookId
+      );
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -294,6 +604,273 @@ class Note {
       client.release();
     }
   }
+  /**
+ * Lister les dossiers d'un utilisateur
+ */
+static async listFolders(userId) {
+  const result = await query(
+    `
+      SELECT id, name, created_at, updated_at
+      FROM notebook_folders
+      WHERE user_id = $1
+      ORDER BY name ASC
+    `,
+    [userId]
+  );
+
+  return result.rows;
 }
+
+/**
+ * Créer un dossier
+ */
+static async createFolder(userId, name) {
+  const normalizedName =
+    String(name || '').trim();
+
+  if (!normalizedName) {
+    return null;
+  }
+
+  const result = await query(
+    `
+      INSERT INTO notebook_folders (
+        user_id,
+        name
+      )
+      VALUES ($1, $2)
+      ON CONFLICT (user_id, name)
+      DO UPDATE SET
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING
+        id,
+        name,
+        created_at,
+        updated_at
+    `,
+    [userId, normalizedName]
+  );
+
+  return result.rows[0] || null;
+}
+
+/**
+ * Renommer un dossier
+ */
+static async renameFolder(
+  userId,
+  sourceFolderName,
+  targetFolderName
+) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const source =
+      String(sourceFolderName || '').trim();
+
+    const target =
+      String(targetFolderName || '').trim();
+
+    if (!source || !target) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    await client.query(
+      `
+        INSERT INTO notebook_folders (
+          user_id,
+          name
+        )
+        VALUES ($1, $2)
+        ON CONFLICT (user_id, name)
+        DO NOTHING
+      `,
+      [userId, target]
+    );
+
+    await client.query(
+      `
+        UPDATE notebooks
+        SET
+          folder_name = $3,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = $1
+          AND folder_name = $2
+      `,
+      [userId, source, target]
+    );
+
+    await client.query(
+      `
+        DELETE FROM notebook_folders
+        WHERE user_id = $1
+          AND name = $2
+      `,
+      [userId, source]
+    );
+
+    await client.query('COMMIT');
+
+    const result = await query(
+      `
+        SELECT id, name, created_at, updated_at
+        FROM notebook_folders
+        WHERE user_id = $1
+        ORDER BY name ASC
+      `,
+      [userId]
+    );
+
+    return result.rows;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Supprimer un dossier et déplacer ses cahiers
+ */
+static async deleteFolder(
+  userId,
+  folderName,
+  targetFolderName
+) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const source =
+      String(folderName || '').trim();
+
+    const target =
+      String(targetFolderName || '').trim();
+
+    if (!source || !target || source === target) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    await client.query(
+      `
+        INSERT INTO notebook_folders (
+          user_id,
+          name
+        )
+        VALUES ($1, $2)
+        ON CONFLICT (user_id, name)
+        DO NOTHING
+      `,
+      [userId, target]
+    );
+
+    await client.query(
+      `
+        UPDATE notebooks
+        SET
+          folder_name = $3,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = $1
+          AND folder_name = $2
+      `,
+      [userId, source, target]
+    );
+
+    await client.query(
+      `
+        DELETE FROM notebook_folders
+        WHERE user_id = $1
+          AND name = $2
+      `,
+      [userId, source]
+    );
+
+    await client.query('COMMIT');
+
+    const result = await query(
+      `
+        SELECT id, name, created_at, updated_at
+        FROM notebook_folders
+        WHERE user_id = $1
+        ORDER BY name ASC
+      `,
+      [userId]
+    );
+
+    return result.rows;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+  static async deletePage(userId, notebookId, pageId) {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const check = await client.query(
+      `
+      SELECT p.id
+      FROM note_pages p
+      JOIN notebooks n
+        ON n.id = p.notebook_id
+      WHERE
+        p.id = $1
+        AND p.notebook_id = $2
+        AND n.user_id = $3
+      `,
+      [pageId, notebookId, userId]
+    );
+
+    if (check.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    await client.query(
+      `
+      DELETE FROM note_pages
+      WHERE id = $1
+      `,
+      [pageId]
+    );
+
+    await client.query(
+      `
+      UPDATE notebooks
+      SET updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      `,
+      [notebookId]
+    );
+
+    await client.query('COMMIT');
+
+    return this.findNotebookById(userId, notebookId);
+
+  } catch (err) {
+
+    await client.query('ROLLBACK');
+    throw err;
+
+  } finally {
+
+    client.release();
+
+  }
+}
+
+}
+
 
 module.exports = Note;

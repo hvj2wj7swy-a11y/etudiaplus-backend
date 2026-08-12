@@ -22,6 +22,45 @@ class ForumAnswer {
   }
 
   /**
+ * Supprimer une réponse
+ * Auteur ou administrateur
+ */
+static async delete(answerId, userId, userRole) {
+  const isAdmin = userRole === 'admin'
+console.log('SUPPRESSION RÉPONSE', {
+  answerId,
+  userId,
+  userRole,
+  isAdmin
+})
+  await query(
+    `
+      DELETE FROM answer_votes
+      WHERE answer_id = $1
+    `,
+    [answerId]
+  )
+
+  const text = `
+    DELETE FROM forum_answers
+    WHERE id = $1
+      AND (
+        answered_by = $2
+        OR $3::boolean = true
+      )
+    RETURNING id
+  `
+
+  const res = await query(text, [
+    answerId,
+    userId,
+    isAdmin
+  ])
+console.log('RÉSULTAT SUPPRESSION', res.rows)
+  return res.rows[0] || null
+}
+
+  /**
    * Obtenir les réponses d'une question
    */
   static async getAnswersByQuestion(questionId, limit = 50, offset = 0) {

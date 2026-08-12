@@ -4,6 +4,7 @@
 
 const Document = require('../models/Document');
 const User = require('../models/User');
+const Notification = require('../models/Notification');
 const path = require('path');
 const fs = require('fs');
 
@@ -42,6 +43,18 @@ class DocumentController {
         courseName,
         uploadedBy: req.user.id
       });
+
+      await Notification.create({
+  userId: req.user.id,
+  type: 'document',
+  title: 'Document téléversé',
+  message:
+    'Votre document a bien été reçu et est en attente de traitement.',
+  link: '/documents',
+  metadata: {
+    documentId: document.id
+  }
+});
 
       res.status(201).json({
         success: true,
@@ -204,6 +217,75 @@ class DocumentController {
       });
     }
   }
-}
+/**
+ * Supprimer un document
+ * Auteur du document ou administrateur
+ */
+static async deleteDocument(req, res) {
+  try {
+    const documentId = Number(req.params.id)
 
+    if (!Number.isInteger(documentId) || documentId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Identifiant de document invalide'
+      })
+    }
+
+    const existingDocument = await Document.findById(documentId)
+
+    if (!existingDocument) {
+      return res.status(404).json({
+        success: false,
+        message: 'Document non trouvé'
+      })
+    }
+
+    const isOwner =
+      Number(existingDocument.uploaded_by) === Number(req.user.id)
+
+    const isAdmin =
+      req.user.role === 'admin'
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message:
+          'Vous n’êtes pas autorisé à supprimer ce document.'
+      })
+    }
+
+    const deletedDocument =
+      await Document.deleteById(documentId)
+
+    if (deletedDocument?.file_url) {
+      const relativePath =
+        deletedDocument.file_url.replace(/^\/+/, '')
+
+      const filePath = path.join(
+        __dirname,
+        '../../',
+        relativePath
+      )
+
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath)
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Document supprimé avec succès'
+    })
+  } catch (error) {
+    console.error('Erreur suppression document:', error)
+
+    return res.status(500).json({
+      success: false,
+      message:
+        'Erreur lors de la suppression du document'
+    })
+  }
+}
+}
 module.exports = DocumentController;

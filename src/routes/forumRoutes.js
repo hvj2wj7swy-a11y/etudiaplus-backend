@@ -5,7 +5,10 @@
 const express = require('express');
 const router = express.Router();
 const forumController = require('../controllers/forumController');
-const { authenticateToken } = require('../middleware/authMiddleware');
+const {
+  authenticateToken,
+  authorizeAdmin
+} = require('../middleware/authMiddleware');
 
 /**
  * POST /api/forum/questions
@@ -17,13 +20,37 @@ router.post('/questions', authenticateToken, forumController.createQuestion);
  * GET /api/forum/questions
  * Obtenir les questions
  */
-router.get('/questions', forumController.getQuestions);
+router.get(
+  '/questions',
+  authenticateToken,
+  forumController.getQuestions
+)
 
 /**
  * GET /api/forum/questions/:id
  * Obtenir une question
  */
 router.get('/questions/:id', forumController.getQuestion);
+
+/**
+ * PUT /api/forum/questions/:id
+ * Modifier une question
+ */
+router.put(
+  '/questions/:id',
+  authenticateToken,
+  forumController.updateQuestion
+);
+
+/**
+ * DELETE /api/forum/questions/:id
+ * Supprimer une question
+ */
+router.delete(
+  '/questions/:id',
+  authenticateToken,
+  forumController.deleteQuestion
+);
 
 /**
  * POST /api/forum/questions/:questionId/answers
@@ -48,5 +75,15 @@ router.post('/answers/:answerId/vote', authenticateToken, forumController.voteAn
  * Marquer une réponse comme solution
  */
 router.post('/answers/:answerId/mark-solution', authenticateToken, forumController.markAsSolution);
+
+/**
+ * DELETE /api/forum/answers/:answerId
+ * Supprimer une réponse
+ */
+router.delete(
+  '/answers/:answerId',
+  authenticateToken,
+  forumController.deleteAnswer
+)
 
 module.exports = router;

@@ -25,6 +25,7 @@ const authenticateToken = (req, res, next) => {
         message: 'Token invalide ou expiré'
       });
     }
+
     req.user = user;
     next();
   });
