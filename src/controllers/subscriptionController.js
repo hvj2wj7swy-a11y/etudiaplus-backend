@@ -157,11 +157,12 @@ const session = await stripe.checkout.sessions.create({
   },
 
   subscription_data: {
-    metadata: {
-      userId: String(req.user.id),
-      plan
-    }
+  trial_period_days: 30,
+  metadata: {
+    userId: String(req.user.id),
+    plan
   }
+}
 });
 
 return res.json({
