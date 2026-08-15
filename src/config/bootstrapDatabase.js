@@ -257,6 +257,17 @@ await dbClient.query(`
   ON notifications(created_at DESC)
 `);
 await dbClient.query(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_agenda_reminder_unique
+  ON notifications (
+    user_id,
+    (metadata->>'eventId'),
+    (metadata->>'reminderType')
+  )
+  WHERE type = 'agenda'
+    AND metadata->>'eventId' IS NOT NULL
+    AND metadata->>'reminderType' IS NOT NULL
+`);
+await dbClient.query(`
   CREATE TABLE IF NOT EXISTS agenda_events (
     id SERIAL PRIMARY KEY,
 

@@ -20,6 +20,7 @@ class Notification {
           metadata
         )
         VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+        ON CONFLICT DO NOTHING
         RETURNING
           id,
           user_id,
