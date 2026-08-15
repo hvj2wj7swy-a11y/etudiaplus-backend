@@ -12,17 +12,18 @@ const createAgendaReminders = async (userId, events) => {
       continue;
     }
 
-    const date = String(
-      event.event_date
-    ).slice(0, 10);
+    const date =
+  event.event_date instanceof Date
+    ? event.event_date.toISOString().slice(0, 10)
+    : String(event.event_date).slice(0, 10);
 
     const time = String(
       event.start_time
     ).slice(0, 5);
 
     const startAt = new Date(
-      `${date}T${time}:00`
-    );
+  `${date}T${time}:00`
+);
 
     const startTimestamp =
       startAt.getTime();
