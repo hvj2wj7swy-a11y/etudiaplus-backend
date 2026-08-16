@@ -1,7 +1,3 @@
-/**
- * Configuration de l'application Express
- */
-
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
@@ -82,6 +78,9 @@ app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 
 // Routes des notes
 app.use('/api/notes', require('./routes/noteRoutes'));
+
+// Routes des flashcards
+app.use('/api/flashcards', require('./routes/flashcardRoutes'));
 
 // Routes des abonnements
 app.use('/api/subscriptions', require('./routes/subscriptionRoutes'));
