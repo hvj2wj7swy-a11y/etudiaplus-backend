@@ -33,4 +33,13 @@ router.patch(
   flashcardController.reviewCard
 );
 
+router.get('/test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Flashcard route chargée'
+  });
+});
+
 module.exports = router;
+
+
